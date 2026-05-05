@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Lobby</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+<div class="container">
+
+    <h1>Lobby 🎮</h1>
+
+    <h3>Room Code: {{ room.room_code }}</h3>
+
+    <h3>Players</h3>
+    <ul id="playersList"></ul>
+
+    {% if player.is_host %}
+        <button onclick="startGame()">Start Game 🚀</button>
+    {% else %}
+        <p>Waiting for host to start game...</p>
+    {% endif %}
+
+</div>
+
+<script>
+    const roomCode = "{{ room.room_code }}";
+
+    const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+
+    const socket = new WebSocket(
+        protocol + window.location.host + "/ws/game/" + roomCode + "/"
+    );
+
+    socket.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+        console.log("Lobby WS:", data);
+
+        // Show players
+        if (data.players) {
+            const list = document.getElementById("playersList");
+            list.innerHTML = "";
+
+            data.players.forEach(p => {
+                const li = document.createElement("li");
+                li.innerText = p.name;
+                list.appendChild(li);
+            });
+        }
+
+        // Redirect when game starts
+        if (data.type === "game_started") {
+            window.location.href = "/game/" + roomCode + "/";
+        }
+    };
+
+    function startGame() {
+        console.log("Start clicked");
+
+        socket.send(JSON.stringify({
+            action: "start_game"
+        }));
+    }
+</script>
+
+</body>
+</html>

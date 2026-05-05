@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>GuessVerse</title>
+    <link rel="stylesheet" href="/static/style.css?v=100">
+</head>
+<body class="gvx-body">
+
+<div class="gvx-bg">
+    <span>😜</span>
+    <span>🥸</span>
+    <span>😎</span>
+    <span>🎨</span>
+    <span>🤔</span>
+    <span>✏️</span>
+    <span>🤐</span>
+    <span>🤡</span>
+    <span>🎃</span>
+    <span>👀</span>
+    <span>😜</span>
+    <span>🥸</span>
+    <span>😎</span>
+    <span>🎨</span>
+    <span>🤔</span>
+    <span>✏️</span>
+    <span>🤐</span>
+    <span>🤡</span>
+    <span>🎃</span>
+    <span>👀</span>
+</div>
+
+<div class="gvx-page">
+
+    <header class="gvx-header">
+        <div class="gvx-logo-card">
+            <img src="/static/guessverse.png" class="gvx-logo-img">
+        </div>
+
+        <p class="gvx-subtitle">Draw clues. Drop emojis. Guess fast.</p>
+
+        <div class="gvx-mini-avatars">
+            <span>🐶</span><span>🐱</span><span>🦊</span><span>🐼</span>
+            <span>🐵</span><span>🐸</span><span>🦁</span><span>🐯</span>
+        </div>
+    </header>
+
+    {% if error %}
+        <p class="gvx-error">{{ error }}</p>
+    {% endif %}
+
+    <main class="gvx-main">
+        <section class="gvx-panel">
+
+            <input id="playerName" class="gvx-name-input" type="text" placeholder="Enter your nickname">
+
+            <div class="gvx-avatar-zone">
+                <button type="button" class="gvx-arrow" onclick="changeAvatar(-1)">‹</button>
+
+                <div class="gvx-avatar-stage">
+                    <div id="avatarPreview" class="gvx-big-avatar">🐶</div>
+                    <p>Choose Avatar</p>
+                </div>
+
+                <button type="button" class="gvx-arrow" onclick="changeAvatar(1)">›</button>
+            </div>
+
+            <input type="hidden" id="avatarSelect" value="🐶">
+
+            <form method="POST" action="{% url 'create_room' %}" onsubmit="return copyCreateValues()">
+                {% csrf_token %}
+
+                <input type="hidden" name="name" id="createName">
+                <input type="hidden" name="avatar" id="createAvatar">
+
+                <div class="gvx-settings">
+                    <label>
+                        <span>⏱ Time</span>
+                        <input type="number" name="round_time" value="60" min="20" max="180">
+                    </label>
+
+                    <label>
+                        <span>🔁 Rounds</span>
+                        <input type="number" name="total_rounds" value="5" min="1" max="20">
+                    </label>
+
+                    <label>
+                        <span>🎲 Words</span>
+                        <input type="number" name="word_options_count" value="3" min="3" max="10">
+                    </label>
+                    <label>
+                        <span>👥 Players</span>
+                        <input type="number" name="max_players" value="4" min="4" max="10" step="2">
+                    </label>
+
+                    <label>
+                        <span>🌍 Allow Random Players</span>
+                        <input type="checkbox" name="allow_random">
+                    </label>
+                </div>
+
+                <button class="gvx-create-btn" type="submit" onclick="playClick()">Create Room</button>
+            </form>
+
+            <div class="gvx-divider">
+                <span>or join a room</span>
+            </div>
+
+            <div class="gvx-join-section">
+
+    <form method="POST" action="{% url 'join_room' %}" onsubmit="return copyJoinValues()">
+        {% csrf_token %}
+
+        <input type="hidden" name="name" id="joinName">
+        <input type="hidden" name="avatar" id="joinAvatar">
+
+        <div class="gvx-join-row">
+            <input type="text" name="room_code" placeholder="Room code">
+            <button type="submit" onclick="playClick()">Join</button>
+        </div>
+    </form>
+
+    <form method="POST" action="{% url 'join_random_room' %}" onsubmit="return copyRandomValues()">
+        {% csrf_token %}
+
+        <input type="hidden" name="name" id="randomName">
+        <input type="hidden" name="avatar" id="randomAvatar">
+
+        <button class="gvx-create-btn gvx-random-btn" type="submit" onclick="playClick()">
+            Find Random Room 🌍
+        </button>
+    </form>
+
+</div>
+
+        </section>
+    </main>
+
+    <section class="gvx-info-grid">
+        <div class="gvx-info-card">
+            <h2>🎨 Draw</h2>
+            <p>The hint giver draws clues using the live canvas, colors, and brush tools.</p>
+        </div>
+
+        <div class="gvx-info-card">
+            <h2>💬 Hint</h2>
+            <p>Use emojis, meme-style clues, and quick thinking to help your team.</p>
+        </div>
+
+        <div class="gvx-info-card">
+            <h2>🏆 Win</h2>
+            <p>Guess before the timer ends, score points, and celebrate the winning team.</p>
+        </div>
+    </section>
+
+</div>
+
+<audio id="clickSound">
+    <source src="https://actions.google.com/sounds/v1/cartoon/pop.ogg" type="audio/ogg">
+</audio>
+
+<script>
+    const avatars = ["🐶", "🐱", "🦊", "🐼", "🐵", "🐸", "🦁", "🐯", "🐨", "🐰", "🐻", "🐧", "🐙", "🐮", "🐷"];
+    let avatarIndex = 0;
+
+    function changeAvatar(direction) {
+        avatarIndex = (avatarIndex + direction + avatars.length) % avatars.length;
+
+        const avatar = document.getElementById("avatarPreview");
+        avatar.classList.remove("gvx-pop");
+        void avatar.offsetWidth;
+
+        avatar.innerText = avatars[avatarIndex];
+        avatar.classList.add("gvx-pop");
+
+        document.getElementById("avatarSelect").value = avatars[avatarIndex];
+        playClick();
+    }
+
+    function playClick() {
+        const sound = document.getElementById("clickSound");
+        if (sound) {
+            sound.currentTime = 0;
+            sound.play().catch(() => {});
+        }
+    }
+
+    function getPlayerName() {
+        const name = document.getElementById("playerName").value.trim();
+
+        if (!name) {
+            alert("Please enter your name.");
+            return null;
+        }
+
+        return name;
+    }
+
+    function copyCreateValues() {
+        const name = getPlayerName();
+        if (!name) return false;
+
+        document.getElementById("createName").value = name;
+        document.getElementById("createAvatar").value = document.getElementById("avatarSelect").value;
+
+        return true;
+    }
+
+    function copyJoinValues() {
+        const name = getPlayerName();
+        if (!name) return false;
+
+        document.getElementById("joinName").value = name;
+        document.getElementById("joinAvatar").value = document.getElementById("avatarSelect").value;
+
+        return true;
+    }
+    function copyRandomValues() {
+    const name = getPlayerName();
+    if (!name) return false;
+
+    document.getElementById("randomName").value = name;
+    document.getElementById("randomAvatar").value =
+        document.getElementById("avatarSelect").value;
+
+    return true;
+}
+</script>
+
+</body>
+</html>

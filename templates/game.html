@@ -1,0 +1,823 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>GuessVerse Game</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+</head>
+<body>
+
+<div id="winnerScreen" class="winner-screen" style="display:none;">
+    <div class="winner-card">
+        <h1 id="winnerText">Winner</h1>
+        <p id="finalScoreText"></p>
+        <button onclick="goHome()">🏠 Home</button>
+    </div>
+</div>
+
+<div class="game-layout">
+
+    <div class="left-panel">
+        <h1>GuessVerse 🎮</h1>
+
+        <div class="score-card">
+            <h2>Score</h2>
+            <p>Team A: <span id="teamAScore">0</span></p>
+            <p>Team B: <span id="teamBScore">0</span></p>
+        </div>
+
+        <div class="info-card">
+            <h3>Your Info</h3>
+            <p>Name: {{ player.avatar }} {{ player.name }}</p>
+            <p>Your Team: <span id="myTeam">Waiting...</span></p>
+        </div>
+
+        <div class="info-card">
+            <h3>Round</h3>
+            <p><span id="currentRound">1</span> / <span id="totalRounds">0</span></p>
+        </div>
+
+        <div class="info-card">
+            <h3>Turn</h3>
+            <p>Selecting Team: <span id="selectingTeam"></span></p>
+            <p>Guessing Team: <span id="guessingTeam"></span></p>
+        </div>
+
+        <div class="teams-box">
+            <h3>Team A</h3>
+            <ul id="teamAList"></ul>
+
+            <h3>Team B</h3>
+            <ul id="teamBList"></ul>
+        </div>
+    </div>
+
+    <div class="center-panel">
+
+        <div class="top-game-bar">
+            <div>
+                <h2 id="phaseText">Waiting...</h2>
+                <p id="resultText"></p>
+            </div>
+
+            <div class="timer-circle">
+                <span id="timer">--</span>
+            </div>
+        </div>
+
+        <div id="selectingPanel" class="action-box">
+            <h2>Select One Word</h2>
+            <button id="getWordsBtn" onclick="getWords()">Get Words 🎲</button>
+
+            <div id="wordOptionsSection">
+                <h3>Choose One Word</h3>
+                <div id="wordOptions"></div>
+            </div>
+        </div>
+
+        <div id="guessingPanel">
+            <div class="movie-hint-box">
+                <h2 id="hiddenWord">Waiting for word...</h2>
+                <p id="wordCount"></p>
+                <p id="wordLengths"></p>
+                <h3 id="actualWord">Word hidden</h3>
+            </div>
+
+            <div class="canvas-wrapper">
+
+                <div class="tools">
+                    <label>Color:</label>
+                    <input type="color" id="colorPicker" value="#000000">
+
+                    <label>Brush:</label>
+                    <select id="brushSize">
+                        <option value="2">Thin</option>
+                        <option value="4" selected>Normal</option>
+                        <option value="8">Thick</option>
+                        <option value="14">Extra Thick</option>
+                    </select>
+
+                    <button id="fillBtn" onclick="fillCanvas()">🪣 Fill</button>
+                    <button id="clearBtn" onclick="clearCanvas()">Clear</button>
+                </div>
+
+                <canvas id="drawingCanvas" width="650" height="380"></canvas>
+            </div>
+        </div>
+
+    </div>
+
+    <div class="right-panel">
+        <h2>Emoji / Meme Hint</h2>
+        <div id="hintBox" class="chat-box"></div>
+
+        <input type="text" id="hintInput" placeholder="Only hint giver can type emoji/meme hint">
+        <button id="hintBtn" onclick="sendHint()">Send Hint</button>
+
+        <div class="quick-box">
+            <h4>Emojis</h4>
+            <div id="emojiBox"></div>
+
+            <h4>Dialogues / Memes</h4>
+            <div id="memeBox"></div>
+        </div>
+
+        <hr>
+
+        <h2>Guess Chat</h2>
+        <div id="guessBox" class="chat-box"></div>
+
+        <input type="text" id="guessInput" placeholder="Guess the word">
+        <button id="guessBtn" onclick="submitGuess()">Submit Guess</button>
+    </div>
+
+</div>
+<script>
+    const roomCode = "{{ room.room_code }}";
+    const playerId = "{{ player.id }}";
+    const playerName = "{{ player.name }}";
+
+    let currentRoom = null;
+    let allPlayers = [];
+    let currentWordOptions = [];
+    let isDrawing = false;
+    let timerInterval = null;
+    let winnerShown = false;
+    let lastDrawSend = 0;
+    let restoredRoundKey = null;
+
+    const emojis = ["🎬", "🔥", "😂", "😎", "👑", "💀", "❤️", "😭", "🤔", "🏃", "💃", "👮", "👻", "🚗", "🏠", "🐶", "🍕", "🌍"];
+
+    const memes = [
+        "Full comedy scene",
+        "Emotional drama vibes",
+        "Hero entry moment",
+        "Villain energy",
+        "Family is everything",
+        "Mission impossible vibes",
+        "The chosen one",
+        "Famous personality",
+        "Travel destination",
+        "Food item",
+        "Animal clue",
+        "Fruit or vegetable clue"
+    ];
+
+    const protocol = window.location.protocol === "https:" ? "wss://" : "ws://";
+    const socket = new WebSocket(
+        protocol + window.location.host + "/ws/game/" + roomCode + "/"
+    );
+
+    socket.onmessage = function(event) {
+        const data = JSON.parse(event.data);
+        console.log("WS DATA:", data);
+        if (data.type === "start_error") {
+            alert(data.message);
+        }
+
+        if (data.room) {
+            currentRoom = data.room;
+            updateRoomUI();
+            restoreRoundAfterRefresh();
+        }
+
+        if (data.players) {
+            allPlayers = data.players;
+            updatePlayersUI();
+        }
+
+        if (data.type === "word_options") {
+            currentWordOptions = data.words || [];
+            renderWordOptions();
+        }
+
+        if (data.type === "word_selected") {
+            restoredRoundKey = null;
+            currentWordOptions = [];
+            renderWordOptions();
+            showWordHint(data.hint);
+            document.getElementById("actualWord").innerText = "Word hidden";
+            clearCanvasLocal();
+            document.getElementById("hintBox").innerHTML = "";
+            document.getElementById("guessBox").innerHTML = "";
+        }
+
+        if (data.type === "word_revealed") {
+            document.getElementById("actualWord").innerText = "Word: " + data.word;
+        }
+
+        if (data.type === "timer_start") {
+            startLocalTimer(data.start_time, data.duration);
+        }
+
+        if (data.type === "hint_message") {
+            addHintMessage(data.player_name, data.message);
+        }
+
+        if (data.type === "guess_message") {
+            addGuessMessage(data.player_name, data.guess);
+        }
+
+        if (data.type === "guess_result") {
+            if (data.correct) {
+                document.getElementById("resultText").innerText =
+                    data.player_name + " guessed correctly! 🎉";
+                stopLocalTimer();
+                resetRoundUI();
+            } else {
+                document.getElementById("resultText").innerText =
+                    data.player_name + " guessed wrong.";
+            }
+        }
+
+        if (data.type === "time_up_result") {
+            document.getElementById("resultText").innerText =
+                "Time up! Point given to selecting team.";
+            stopLocalTimer();
+            resetRoundUI();
+        }
+
+        if (data.type === "draw_start_event") {
+            remoteDrawStart(data.x, data.y);
+        }
+
+        if (data.type === "draw_move_event") {
+            remoteDrawMove(data.x, data.y, data.color, data.size);
+        }
+
+        if (data.type === "clear_canvas_event") {
+            clearCanvasLocal();
+        }
+
+        if (data.type === "fill_canvas_event") {
+            fillCanvasLocal(data.color);
+        }
+
+        updateVisibility();
+    };
+
+    function restoreRoundAfterRefresh() {
+        if (!currentRoom) return;
+
+        if (
+            currentRoom.phase === "guessing" &&
+            currentRoom.selected_word &&
+            currentRoom.round_started_at
+        ) {
+            const roundKey = currentRoom.current_round + "-" + currentRoom.round_started_at;
+
+            if (restoredRoundKey !== roundKey) {
+                restoredRoundKey = roundKey;
+
+                const hint = makeWordHint(currentRoom.selected_word);
+                showWordHint(hint);
+
+                document.getElementById("actualWord").innerText = "Word hidden";
+
+                if (String(currentRoom.hint_giver_id) === String(playerId)) {
+                    document.getElementById("actualWord").innerText =
+                        "Word: " + currentRoom.selected_word;
+                }
+
+                startLocalTimer(currentRoom.round_started_at, currentRoom.round_time);
+            }
+        }
+    }
+
+    function makeWordHint(word) {
+        const parts = word.trim().split(/\s+/);
+
+        return {
+            hidden_name: parts.map(w => "_".repeat(w.length)).join(" "),
+            word_count: parts.length,
+            word_lengths: parts.map(w => w.length)
+        };
+    }
+
+    function startLocalTimer(startTimeSeconds, durationSeconds) {
+        stopLocalTimer();
+
+        const endTime = (startTimeSeconds * 1000) + (durationSeconds * 1000);
+
+        timerInterval = setInterval(function() {
+            const now = Date.now();
+            const timeLeft = Math.max(0, Math.floor((endTime - now) / 1000));
+
+            document.getElementById("timer").innerText = timeLeft;
+
+            if (timeLeft <= 0) {
+                stopLocalTimer();
+            }
+        }, 500);
+    }
+
+    function stopLocalTimer() {
+        if (timerInterval) {
+            clearInterval(timerInterval);
+            timerInterval = null;
+        }
+    }
+
+    function getMyPlayer() {
+        return allPlayers.find(p => String(p.id) === String(playerId));
+    }
+
+    function getMyTeam() {
+        const me = getMyPlayer();
+        return me ? me.team : null;
+    }
+
+    function isSelectingTeam() {
+        return currentRoom && getMyTeam() === currentRoom.current_selecting_team;
+    }
+
+    function isGuessingTeam() {
+        return currentRoom && getMyTeam() === currentRoom.current_guessing_team;
+    }
+
+    function canGiveHint() {
+        return currentRoom &&
+               currentRoom.phase === "guessing" &&
+               String(currentRoom.hint_giver_id) === String(playerId);
+    }
+
+    function canGuess() {
+        return currentRoom &&
+               currentRoom.phase === "guessing" &&
+               isGuessingTeam() &&
+               !canGiveHint();
+    }
+
+    function updateRoomUI() {
+        if (!currentRoom) return;
+
+        document.getElementById("teamAScore").innerText = currentRoom.team_a_score;
+        document.getElementById("teamBScore").innerText = currentRoom.team_b_score;
+        document.getElementById("selectingTeam").innerText = currentRoom.current_selecting_team;
+        document.getElementById("guessingTeam").innerText = currentRoom.current_guessing_team;
+        document.getElementById("currentRound").innerText = currentRoom.current_round;
+        document.getElementById("totalRounds").innerText = currentRoom.total_rounds;
+            // 👇 ADD THIS HERE
+        if (currentRoom.max_players) {
+            document.getElementById("phaseText").innerText =
+                currentRoom.phase + " (" + currentRoom.current_players + "/" + currentRoom.max_players + " players)";
+        }
+        if ((currentRoom.status === "finished" || currentRoom.phase === "game_over") && !winnerShown) {
+            showWinner();
+        }
+    }
+
+    function updatePlayersUI() {
+        const teamAList = document.getElementById("teamAList");
+        const teamBList = document.getElementById("teamBList");
+
+        teamAList.innerHTML = "";
+        teamBList.innerHTML = "";
+
+        allPlayers.forEach(player => {
+            if (String(player.id) === String(playerId)) {
+                document.getElementById("myTeam").innerText =
+                    player.team || "Not assigned";
+            }
+
+            const li = document.createElement("li");
+            li.innerText = player.avatar + " " + player.name;
+
+            if (String(player.id) === String(playerId)) {
+                li.innerText += " (You)";
+            }
+
+            if (currentRoom && String(player.id) === String(currentRoom.hint_giver_id)) {
+                li.innerText += " 🎨 Hint Giver";
+            }
+
+            if (player.team === "A") {
+                teamAList.appendChild(li);
+            }
+
+            if (player.team === "B") {
+                teamBList.appendChild(li);
+            }
+        });
+    }
+
+    function updateVisibility() {
+        if (!currentRoom) return;
+
+        const selectingPanel = document.getElementById("selectingPanel");
+        const guessingPanel = document.getElementById("guessingPanel");
+        const wordOptionsSection = document.getElementById("wordOptionsSection");
+
+        const hintInput = document.getElementById("hintInput");
+        const hintBtn = document.getElementById("hintBtn");
+        const guessInput = document.getElementById("guessInput");
+        const guessBtn = document.getElementById("guessBtn");
+        const clearBtn = document.getElementById("clearBtn");
+        const fillBtn = document.getElementById("fillBtn");
+
+        selectingPanel.style.display = "none";
+        guessingPanel.style.display = "none";
+        wordOptionsSection.style.display = "none";
+
+        hintInput.disabled = !canGiveHint();
+        hintBtn.disabled = !canGiveHint();
+        clearBtn.disabled = !canGiveHint();
+        fillBtn.disabled = !canGiveHint();
+        guessInput.disabled = !canGuess();
+        guessBtn.disabled = !canGuess();
+
+        if (currentRoom.phase === "word_selection") {
+            document.getElementById("phaseText").innerText =
+                "Team " + currentRoom.current_selecting_team + " is selecting a word";
+
+            if (isSelectingTeam()) {
+                selectingPanel.style.display = "block";
+
+                if (currentWordOptions.length > 0) {
+                    wordOptionsSection.style.display = "block";
+                }
+            }
+        }
+
+        if (currentRoom.phase === "guessing") {
+            document.getElementById("phaseText").innerText =
+                "Team " + currentRoom.current_guessing_team + " is guessing";
+
+            guessingPanel.style.display = "block";
+        }
+
+        if (currentRoom.phase === "game_over") {
+            selectingPanel.style.display = "none";
+            guessingPanel.style.display = "none";
+        }
+    }
+
+    function getWords() {
+        if (!isSelectingTeam()) return;
+
+        socket.send(JSON.stringify({
+            action: "get_words"
+        }));
+    }
+
+    function renderWordOptions() {
+        const wordOptions = document.getElementById("wordOptions");
+        wordOptions.innerHTML = "";
+
+        currentWordOptions.forEach(item => {
+            const btn = document.createElement("button");
+            btn.innerText = item.name;
+
+            btn.onclick = function() {
+                selectWord(item.name);
+            };
+
+            wordOptions.appendChild(btn);
+        });
+
+        updateVisibility();
+    }
+
+    function selectWord(word) {
+        if (!isSelectingTeam()) return;
+
+        socket.send(JSON.stringify({
+            action: "select_word",
+            word: word
+        }));
+    }
+
+    function showWordHint(hint) {
+        document.getElementById("hiddenWord").innerText = hint.hidden_name;
+        document.getElementById("wordCount").innerText = "Words: " + hint.word_count;
+        document.getElementById("wordLengths").innerText =
+            "Word lengths: " + hint.word_lengths.join(", ");
+    }
+
+    function sendHint() {
+        if (!canGiveHint()) return;
+
+        const input = document.getElementById("hintInput");
+        const message = input.value.trim();
+
+        if (!message) return;
+
+        socket.send(JSON.stringify({
+            action: "send_hint",
+            player_name: playerName,
+            message: message
+        }));
+
+        input.value = "";
+    }
+
+    function submitGuess() {
+        if (!canGuess()) return;
+
+        const input = document.getElementById("guessInput");
+        const guess = input.value.trim();
+
+        if (!guess) return;
+
+        socket.send(JSON.stringify({
+            action: "submit_guess",
+            player_name: playerName,
+            guess: guess
+        }));
+
+        input.value = "";
+    }
+
+    function addHintMessage(name, message) {
+        const hintBox = document.getElementById("hintBox");
+
+        const p = document.createElement("p");
+        p.innerHTML = "<b>" + name + ":</b> " + message;
+
+        hintBox.appendChild(p);
+        hintBox.scrollTop = hintBox.scrollHeight;
+    }
+
+    function addGuessMessage(name, guess) {
+        const guessBox = document.getElementById("guessBox");
+
+        const p = document.createElement("p");
+        p.innerHTML = "<b>" + name + ":</b> " + guess;
+
+        guessBox.appendChild(p);
+        guessBox.scrollTop = guessBox.scrollHeight;
+    }
+
+    function resetRoundUI() {
+        restoredRoundKey = null;
+        currentWordOptions = [];
+
+        document.getElementById("hiddenWord").innerText = "Waiting for word...";
+        document.getElementById("wordCount").innerText = "";
+        document.getElementById("wordLengths").innerText = "";
+        document.getElementById("actualWord").innerText = "Word hidden";
+        document.getElementById("wordOptions").innerHTML = "";
+        document.getElementById("timer").innerText = "--";
+        document.getElementById("hintBox").innerHTML = "";
+        document.getElementById("guessBox").innerHTML = "";
+
+        clearCanvasLocal();
+    }
+
+    function showWinner() {
+        winnerShown = true;
+
+        let winner = "🤝 Match Draw";
+
+        if (currentRoom.team_a_score > currentRoom.team_b_score) {
+            winner = "🏆 Team A Wins!";
+        }
+
+        if (currentRoom.team_b_score > currentRoom.team_a_score) {
+            winner = "🏆 Team B Wins!";
+        }
+
+        document.getElementById("winnerText").innerText = winner;
+        document.getElementById("finalScoreText").innerText =
+            "Final Score — Team A: " + currentRoom.team_a_score +
+            " | Team B: " + currentRoom.team_b_score;
+
+        document.getElementById("winnerScreen").style.display = "flex";
+
+        if (typeof confetti !== "undefined") {
+            confetti({
+                particleCount: 200,
+                spread: 100,
+                origin: { y: 0.6 }
+            });
+        }
+    }
+
+    function goHome() {
+        window.location.href = "/";
+    }
+
+    const canvas = document.getElementById("drawingCanvas");
+    const ctx = canvas.getContext("2d");
+
+    canvas.addEventListener("mousedown", function(event) {
+        if (!canGiveHint()) return;
+
+        isDrawing = true;
+
+        const pos = getCanvasPosition(event);
+        const color = getSelectedColor();
+        const size = getSelectedSize();
+
+        ctx.beginPath();
+        ctx.moveTo(pos.x, pos.y);
+
+        socket.send(JSON.stringify({
+            action: "draw_start",
+            x: pos.x,
+            y: pos.y,
+            color: color,
+            size: size
+        }));
+    });
+
+    canvas.addEventListener("mousemove", function(event) {
+        if (!isDrawing) return;
+        if (!canGiveHint()) return;
+
+        const pos = getCanvasPosition(event);
+        const color = getSelectedColor();
+        const size = getSelectedSize();
+
+        drawLine(pos.x, pos.y, color, size);
+        sendDrawMove(pos.x, pos.y, color, size);
+    });
+
+    canvas.addEventListener("mouseup", stopDrawing);
+    canvas.addEventListener("mouseleave", stopDrawing);
+
+    canvas.addEventListener("touchstart", function(event) {
+        event.preventDefault();
+
+        if (!canGiveHint()) return;
+
+        isDrawing = true;
+
+        const touch = event.touches[0];
+        const pos = getCanvasTouchPosition(touch);
+        const color = getSelectedColor();
+        const size = getSelectedSize();
+
+        ctx.beginPath();
+        ctx.moveTo(pos.x, pos.y);
+
+        socket.send(JSON.stringify({
+            action: "draw_start",
+            x: pos.x,
+            y: pos.y,
+            color: color,
+            size: size
+        }));
+    }, { passive: false });
+
+    canvas.addEventListener("touchmove", function(event) {
+        event.preventDefault();
+
+        if (!isDrawing) return;
+        if (!canGiveHint()) return;
+
+        const touch = event.touches[0];
+        const pos = getCanvasTouchPosition(touch);
+        const color = getSelectedColor();
+        const size = getSelectedSize();
+
+        drawLine(pos.x, pos.y, color, size);
+        sendDrawMove(pos.x, pos.y, color, size);
+    }, { passive: false });
+
+    canvas.addEventListener("touchend", function(event) {
+        event.preventDefault();
+        stopDrawing();
+    }, { passive: false });
+
+    function sendDrawMove(x, y, color, size) {
+        const now = Date.now();
+
+        if (now - lastDrawSend < 25) return;
+
+        lastDrawSend = now;
+
+        socket.send(JSON.stringify({
+            action: "draw_move",
+            x: x,
+            y: y,
+            color: color,
+            size: size
+        }));
+    }
+
+    function stopDrawing() {
+        isDrawing = false;
+        ctx.beginPath();
+    }
+
+    function getCanvasPosition(event) {
+        const rect = canvas.getBoundingClientRect();
+
+        return {
+            x: event.clientX - rect.left,
+            y: event.clientY - rect.top
+        };
+    }
+
+    function getCanvasTouchPosition(touch) {
+        const rect = canvas.getBoundingClientRect();
+
+        return {
+            x: touch.clientX - rect.left,
+            y: touch.clientY - rect.top
+        };
+    }
+
+    function getSelectedColor() {
+        return document.getElementById("colorPicker").value;
+    }
+
+    function getSelectedSize() {
+        return document.getElementById("brushSize").value;
+    }
+
+    function drawLine(x, y, color, size) {
+        ctx.lineWidth = size || 4;
+        ctx.lineCap = "round";
+        ctx.strokeStyle = color || "#000000";
+
+        ctx.lineTo(x, y);
+        ctx.stroke();
+
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+    }
+
+    function remoteDrawStart(x, y) {
+        ctx.beginPath();
+        ctx.moveTo(x, y);
+    }
+
+    function remoteDrawMove(x, y, color, size) {
+        drawLine(x, y, color, size);
+    }
+
+    function clearCanvas() {
+        if (!canGiveHint()) return;
+
+        clearCanvasLocal();
+
+        socket.send(JSON.stringify({
+            action: "clear_canvas"
+        }));
+    }
+
+    function clearCanvasLocal() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.beginPath();
+    }
+
+    function fillCanvas() {
+        if (!canGiveHint()) return;
+
+        const color = getSelectedColor();
+
+        fillCanvasLocal(color);
+
+        socket.send(JSON.stringify({
+            action: "fill_canvas",
+            color: color
+        }));
+    }
+
+    function fillCanvasLocal(color) {
+        ctx.fillStyle = color || "#ffffff";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.beginPath();
+    }
+
+    function loadEmojis() {
+        const box = document.getElementById("emojiBox");
+        box.innerHTML = "";
+
+        emojis.forEach(e => {
+            const btn = document.createElement("button");
+            btn.innerText = e;
+
+            btn.onclick = function() {
+                if (!canGiveHint()) return;
+                document.getElementById("hintInput").value += e;
+            };
+
+            box.appendChild(btn);
+        });
+    }
+
+    function loadMemes() {
+        const box = document.getElementById("memeBox");
+        box.innerHTML = "";
+
+        memes.forEach(m => {
+            const btn = document.createElement("button");
+            btn.innerText = m;
+
+            btn.onclick = function() {
+                if (!canGiveHint()) return;
+                document.getElementById("hintInput").value = m;
+            };
+
+            box.appendChild(btn);
+        });
+    }
+
+    loadEmojis();
+    loadMemes();
+</script>
+</body>
+</html>
